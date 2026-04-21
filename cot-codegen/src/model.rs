@@ -337,15 +337,20 @@ impl TryFrom<syn::Type> for ManyToManySpec {
 
     fn try_from(ty: syn::Type) -> Result<Self, Self::Error> {
         let syn::Type::Path(type_path) = &ty else {
-            panic!("Expected a path type for a many-to-many relation");
+            return Err(syn::Error::new(
+                ty.span(),
+                "expected ManyToMany to be a path type",
+            ));
         };
 
-        let syn::PathArguments::AngleBracketed(args) = &type_path
-            .path
-            .segments
-            .last()
-            .expect("type path must have at least one segment")
-            .arguments
+        let Some(last_segment) = type_path.path.segments.last() else {
+            return Err(syn::Error::new(
+                ty.span(),
+                "expected ManyToMany to have a type path segment",
+            ));
+        };
+
+        let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
         else {
             return Err(syn::Error::new(
                 ty.span(),

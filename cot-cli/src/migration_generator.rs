@@ -940,6 +940,8 @@ impl MigrationOperationGenerator {
         Field {
             name: format_ident!("id"),
             column_name: "id".to_string(),
+            // Follow Django's default many-to-many intermediary table style by
+            // using a bigint auto primary key.
             ty: parse_quote!(::cot::db::Auto<i64>),
             auto_value: true,
             primary_key: true,
