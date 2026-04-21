@@ -959,10 +959,10 @@ impl MigrationOperationGenerator {
         "model".to_string()
     }
 
-    fn relation_side_field(column_name: String, to_model: syn::Type) -> Field {
+    fn relation_side_field(column_name: &str, to_model: syn::Type) -> Field {
         Field {
             name: format_ident!("{}", column_name),
-            column_name: column_name.clone(),
+            column_name: column_name.to_string(),
             ty: parse_quote!(::cot::db::ForeignKey<#to_model>),
             auto_value: false,
             primary_key: false,
@@ -982,8 +982,8 @@ impl MigrationOperationGenerator {
 
         vec![
             Self::relation_id_field(),
-            Self::relation_side_field(model_col, model.model.resolved_ty.clone()),
-            Self::relation_side_field(relation_col, relation.to_model),
+            Self::relation_side_field(&model_col, model.model.resolved_ty.clone()),
+            Self::relation_side_field(&relation_col, relation.to_model),
         ]
     }
 
@@ -1769,6 +1769,7 @@ mod tests {
                     foreign_key: Some(ForeignKeySpec {
                         to_model: parse_quote!(Table1),
                     }),
+                    many_to_many: None,
                 }),
             },
             DynOperation::CreateModel {
@@ -1809,6 +1810,7 @@ mod tests {
                     foreign_key: Some(ForeignKeySpec {
                         to_model: parse_quote!(Table2),
                     }),
+                    many_to_many: None,
                 }],
             },
             DynOperation::CreateModel {
@@ -1824,6 +1826,7 @@ mod tests {
                     foreign_key: Some(ForeignKeySpec {
                         to_model: parse_quote!(Table1),
                     }),
+                    many_to_many: None,
                 }],
             },
         ];
@@ -1871,6 +1874,7 @@ mod tests {
                 foreign_key: Some(ForeignKeySpec {
                     to_model: parse_quote!(Table2),
                 }),
+                many_to_many: None,
             }],
         };
 
@@ -1926,6 +1930,7 @@ mod tests {
                 foreign_key: Some(ForeignKeySpec {
                     to_model: parse_quote!(crate::Table2),
                 }),
+                many_to_many: None,
             }],
         }];
 
@@ -1955,6 +1960,7 @@ mod tests {
                     foreign_key: Some(ForeignKeySpec {
                         to_model: parse_quote!(my_crate::Table2),
                     }),
+                    many_to_many: None,
                 }],
             },
             DynOperation::CreateModel {
@@ -1970,6 +1976,7 @@ mod tests {
                     foreign_key: Some(ForeignKeySpec {
                         to_model: parse_quote!(crate::Table4),
                     }),
+                    many_to_many: None,
                 }],
             },
         ];
@@ -2008,6 +2015,7 @@ mod tests {
                     primary_key: true,
                     unique: false,
                     foreign_key: None,
+                    many_to_many: None,
                 },
                 fields: vec![Field {
                     name: format_ident!("field1"),
@@ -2017,6 +2025,7 @@ mod tests {
                     primary_key: false,
                     unique: false,
                     foreign_key: None,
+                    many_to_many: None,
                 }],
             },
         }
@@ -2046,6 +2055,7 @@ mod tests {
                     primary_key: true,
                     unique: false,
                     foreign_key: None,
+                    many_to_many: None,
                 },
                 fields: vec![
                     Field {
@@ -2056,6 +2066,7 @@ mod tests {
                         primary_key: false,
                         unique: false,
                         foreign_key: None,
+                        many_to_many: None,
                     },
                     Field {
                         name: format_ident!("field2"),
@@ -2065,6 +2076,7 @@ mod tests {
                         primary_key: false,
                         unique: false,
                         foreign_key: None,
+                        many_to_many: None,
                     },
                 ],
             },
@@ -2082,6 +2094,7 @@ mod tests {
             primary_key: false,
             unique: false,
             foreign_key: None,
+            many_to_many: None,
         };
 
         let operation = MigrationOperationGenerator::make_add_field_operation(&app_model, &field);
@@ -2104,7 +2117,10 @@ mod tests {
     #[test]
     fn make_create_model_operation() {
         let app_model = get_test_model();
-        let operation = MigrationOperationGenerator::make_create_model_operation(&app_model);
+        let operation = MigrationOperationGenerator::make_create_model_operations(&app_model)
+            .into_iter()
+            .next()
+            .expect("at least one operation");
 
         match operation {
             DynOperation::CreateModel {
@@ -2144,7 +2160,10 @@ mod tests {
     #[test]
     fn make_remove_model_operation() {
         let migration_model = get_test_model();
-        let operation = MigrationOperationGenerator::make_remove_model_operation(&migration_model);
+        let operation = MigrationOperationGenerator::make_remove_model_operations(&migration_model)
+            .into_iter()
+            .next()
+            .expect("at least one operation");
 
         match &operation {
             DynOperation::RemoveModel {
@@ -2231,6 +2250,7 @@ mod tests {
                 primary_key: false,
                 unique: false,
                 foreign_key: None,
+                many_to_many: None,
             }),
         };
 

@@ -7,7 +7,7 @@ use crate::db::{DatabaseBackend, DatabaseError, Model, Result};
 /// This field is metadata-only and does not map to a direct column in the
 /// model's table. The migration generator uses it to create an intermediary
 /// relation table.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ManyToMany<T: Model> {
     _marker: PhantomData<T>,
 }
@@ -19,6 +19,12 @@ impl<T: Model> ManyToMany<T> {
         Self {
             _marker: PhantomData,
         }
+    }
+}
+
+impl<T: Model> Default for ManyToMany<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
