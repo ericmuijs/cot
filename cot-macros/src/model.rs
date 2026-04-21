@@ -129,6 +129,12 @@ impl ModelBuilder {
 
         let name = &field.name;
         let ty = &field.ty;
+        if field.many_to_many.is_some() {
+            self.fields_as_from_db.push(quote!(
+                #name: ::core::default::Default::default()
+            ));
+            return;
+        }
         let index = self.fields_as_columns.len();
         let column_name = &field.column_name;
 

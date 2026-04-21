@@ -217,7 +217,17 @@ impl FieldOpts {
                 .map(ForeignKeySpec::try_from)
                 .transpose()?,
         );
+        let many_to_many = self
+            .find_type("cot::db::ManyToMany", symbol_resolver)
+            .map(ManyToManySpec::try_from)
+            .transpose()?;
         let is_primary_key = self.primary_key.is_present();
+        if is_primary_key && many_to_many.is_some() {
+            return Err(syn::Error::new(
+                name.span(),
+                "many-to-many relation fields cannot be primary keys",
+            ));
+        }
         let mut resolved_ty = self.ty.clone();
         symbol_resolver.resolve(&mut resolved_ty, self_reference);
         Ok(Field {
@@ -227,6 +237,7 @@ impl FieldOpts {
             auto_value,
             primary_key: is_primary_key,
             foreign_key,
+            many_to_many,
             unique: self.unique.is_present(),
         })
     }
@@ -264,6 +275,8 @@ pub struct Field {
     /// [`Some`] if this field is a foreign key; [`None`] if this field is
     /// determined not to be a foreign key.
     pub foreign_key: Option<ForeignKeySpec>,
+    /// [`Some`] if this field is a many-to-many relation; [`None`] otherwise.
+    pub many_to_many: Option<ManyToManySpec>,
     pub unique: bool,
 }
 
@@ -309,6 +322,53 @@ impl TryFrom<syn::Type> for ForeignKeySpec {
             Err(syn::Error::new(
                 ty.span(),
                 "expected ForeignKey to have a type generic argument",
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ManyToManySpec {
+    pub to_model: syn::Type,
+}
+
+impl TryFrom<syn::Type> for ManyToManySpec {
+    type Error = syn::Error;
+
+    fn try_from(ty: syn::Type) -> Result<Self, Self::Error> {
+        let syn::Type::Path(type_path) = &ty else {
+            panic!("Expected a path type for a many-to-many relation");
+        };
+
+        let syn::PathArguments::AngleBracketed(args) = &type_path
+            .path
+            .segments
+            .last()
+            .expect("type path must have at least one segment")
+            .arguments
+        else {
+            return Err(syn::Error::new(
+                ty.span(),
+                "expected ManyToMany to have angle-bracketed generic arguments",
+            ));
+        };
+
+        if args.args.len() != 1 {
+            return Err(syn::Error::new(
+                ty.span(),
+                "expected ManyToMany to have only one generic parameter",
+            ));
+        }
+
+        let inner = &args.args[0];
+        if let syn::GenericArgument::Type(ty) = inner {
+            Ok(Self {
+                to_model: ty.clone(),
+            })
+        } else {
+            Err(syn::Error::new(
+                ty.span(),
+                "expected ManyToMany to have a type generic argument",
             ))
         }
     }

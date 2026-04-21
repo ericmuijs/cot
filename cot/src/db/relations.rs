@@ -1,4 +1,26 @@
+use std::marker::PhantomData;
+
 use crate::db::{DatabaseBackend, DatabaseError, Model, Result};
+
+/// A marker for a many-to-many relation declared on a model.
+///
+/// This field is metadata-only and does not map to a direct column in the
+/// model's table. The migration generator uses it to create an intermediary
+/// relation table.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ManyToMany<T: Model> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Model> ManyToMany<T> {
+    /// Creates a new many-to-many relation marker.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
 
 /// A foreign key to another model.
 ///
@@ -262,5 +284,11 @@ mod tests {
         let fk: ForeignKey<TestModel> = ForeignKey::from(&model);
 
         assert_eq!(fk.primary_key(), &Auto::fixed(1));
+    }
+
+    #[test]
+    fn many_to_many_default() {
+        let relation: ManyToMany<TestModel> = ManyToMany::default();
+        assert_eq!(relation, ManyToMany::new());
     }
 }

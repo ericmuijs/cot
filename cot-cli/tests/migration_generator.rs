@@ -125,6 +125,51 @@ fn create_models_foreign_key_cycle() {
 }
 
 #[test]
+fn create_models_many_to_many_relation_table() {
+    let generator = test_generator();
+    let src = include_str!("migration_generator/many_to_many.rs");
+    let source_files = vec![SourceFile::parse(PathBuf::from("main.rs"), src).unwrap()];
+
+    let migration = generator
+        .generate_migrations_as_generated_from_files(source_files)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(migration.dependencies.len(), 0);
+    assert_eq!(migration.operations.len(), 3);
+
+    let mut created_tables = migration
+        .operations
+        .iter()
+        .map(|op| unwrap_create_model(op).0.to_string())
+        .collect::<Vec<_>>();
+    created_tables.sort();
+    assert_eq!(
+        created_tables,
+        vec![
+            "cot__author".to_string(),
+            "cot__author_books".to_string(),
+            "cot__book".to_string()
+        ]
+    );
+
+    let relation_op = migration
+        .operations
+        .iter()
+        .find(|op| unwrap_create_model(op).0 == "cot__author_books")
+        .unwrap();
+    let (_table_name, fields) = unwrap_create_model(relation_op);
+    assert_eq!(fields.len(), 3);
+    assert_eq!(fields[0].column_name, "id");
+    assert!(fields[0].primary_key);
+    assert!(fields[0].auto_value);
+    assert_eq!(fields[1].column_name, "author_id");
+    assert!(fields[1].foreign_key.is_some());
+    assert_eq!(fields[2].column_name, "book_id");
+    assert!(fields[2].foreign_key.is_some());
+}
+
+#[test]
 fn create_models_foreign_key_two_migrations() {
     let generator = test_generator();
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use cot::db::migrations::{DynMigration, MigrationEngine};
-use cot_codegen::model::{Field, Model, ModelArgs, ModelOpts, ModelType};
+use cot_codegen::model::{Field, ForeignKeySpec, Model, ModelArgs, ModelOpts, ModelType};
 use cot_codegen::symbol_resolver::SymbolResolver;
 use darling::FromMeta;
 use heck::ToSnakeCase;
@@ -472,9 +472,8 @@ impl MigrationGenerator {
 
             match (app_model, migration_model) {
                 (Some(&app_model), None) => {
-                    operations.push(MigrationOperationGenerator::make_create_model_operation(
-                        app_model,
-                    ));
+                    operations
+                        .extend(MigrationOperationGenerator::make_create_model_operations(app_model));
                     modified_models.push(app_model.clone());
                 }
                 (Some(&app_model), Some(&migration_model)) => {
@@ -492,7 +491,7 @@ impl MigrationGenerator {
                     }
                 }
                 (None, Some(&migration_model)) => {
-                    operations.push(MigrationOperationGenerator::make_remove_model_operation(
+                    operations.extend(MigrationOperationGenerator::make_remove_model_operations(
                         migration_model,
                     ));
                 }
@@ -686,21 +685,28 @@ struct MigrationOperationGenerator;
 
 impl MigrationOperationGenerator {
     #[must_use]
-    fn make_create_model_operation(app_model: &ModelInSource) -> DynOperation {
+    fn make_create_model_operations(app_model: &ModelInSource) -> Vec<DynOperation> {
         print_status_msg(
             StatusType::Creating,
             &format!("Model '{}'", app_model.model.table_name),
         );
-        let op = DynOperation::CreateModel {
+        let mut operations = vec![DynOperation::CreateModel {
             table_name: app_model.model.table_name.clone(),
             model_ty: app_model.model.resolved_ty.clone(),
-            fields: app_model.model.fields.clone(),
-        };
+            fields: app_model
+                .model
+                .fields
+                .iter()
+                .filter(|field| field.many_to_many.is_none())
+                .cloned()
+                .collect(),
+        }];
+        operations.extend(Self::many_to_many_relation_operations(app_model));
         print_status_msg(
             StatusType::Created,
             &format!("Model '{}'", app_model.model.table_name),
         );
-        op
+        operations
     }
 
     #[must_use]
@@ -736,9 +742,31 @@ impl MigrationOperationGenerator {
 
             match (app_field, migration_field) {
                 (Some(app_field), None) => {
-                    operations.push(Self::make_add_field_operation(app_model, app_field));
+                    if app_field.many_to_many.is_some() {
+                        operations.push(Self::make_create_relation_table_operation(
+                            app_model, app_field,
+                        ));
+                    } else {
+                        operations.push(Self::make_add_field_operation(app_model, app_field));
+                    }
                 }
                 (Some(app_field), Some(migration_field)) => {
+                    if app_field.many_to_many.is_some() || migration_field.many_to_many.is_some() {
+                        if app_field != migration_field {
+                            if migration_field.many_to_many.is_some() {
+                                operations.push(Self::make_remove_relation_table_operation(
+                                    migration_model,
+                                    migration_field,
+                                ));
+                            }
+                            if app_field.many_to_many.is_some() {
+                                operations.push(Self::make_create_relation_table_operation(
+                                    app_model, app_field,
+                                ));
+                            }
+                        }
+                        continue;
+                    }
                     let operation = Self::make_alter_field_operation(
                         app_model,
                         app_field,
@@ -750,10 +778,17 @@ impl MigrationOperationGenerator {
                     }
                 }
                 (None, Some(migration_field)) => {
-                    operations.push(Self::make_remove_field_operation(
-                        migration_model,
-                        migration_field,
-                    ));
+                    if migration_field.many_to_many.is_some() {
+                        operations.push(Self::make_remove_relation_table_operation(
+                            migration_model,
+                            migration_field,
+                        ));
+                    } else {
+                        operations.push(Self::make_remove_field_operation(
+                            migration_model,
+                            migration_field,
+                        ));
+                    }
                 }
                 (None, None) => unreachable!(),
             }
@@ -767,24 +802,37 @@ impl MigrationOperationGenerator {
     }
 
     #[must_use]
-    fn make_remove_model_operation(migration_model: &ModelInSource) -> DynOperation {
+    fn make_remove_model_operations(migration_model: &ModelInSource) -> Vec<DynOperation> {
         print_status_msg(
             StatusType::Removing,
             &format!("Model '{}'", &migration_model.model.name),
         );
 
-        let op = DynOperation::RemoveModel {
+        let mut operations = migration_model
+            .model
+            .fields
+            .iter()
+            .filter(|field| field.many_to_many.is_some())
+            .map(|field| Self::make_remove_relation_table_operation(migration_model, field))
+            .collect::<Vec<_>>();
+        operations.push(DynOperation::RemoveModel {
             table_name: migration_model.model.table_name.clone(),
             model_ty: migration_model.model.resolved_ty.clone(),
-            fields: migration_model.model.fields.clone(),
-        };
+            fields: migration_model
+                .model
+                .fields
+                .iter()
+                .filter(|field| field.many_to_many.is_none())
+                .cloned()
+                .collect(),
+        });
 
         print_status_msg(
             StatusType::Removed,
             &format!("Model '{}'", &migration_model.model.name),
         );
 
-        op
+        operations
     }
 
     #[must_use]
@@ -872,6 +920,87 @@ impl MigrationOperationGenerator {
         );
 
         op
+    }
+
+    fn many_to_many_relation_operations(app_model: &ModelInSource) -> Vec<DynOperation> {
+        app_model
+            .model
+            .fields
+            .iter()
+            .filter(|field| field.many_to_many.is_some())
+            .map(|field| Self::make_create_relation_table_operation(app_model, field))
+            .collect()
+    }
+
+    fn relation_table_name(model: &ModelInSource, relation_field: &Field) -> String {
+        format!("{}_{}", model.model.table_name, relation_field.column_name)
+    }
+
+    fn relation_id_field() -> Field {
+        Field {
+            name: format_ident!("id"),
+            column_name: "id".to_string(),
+            ty: parse_quote!(::cot::db::Auto<i64>),
+            auto_value: true,
+            primary_key: true,
+            foreign_key: None,
+            many_to_many: None,
+            unique: false,
+        }
+    }
+
+    fn type_base_name(ty: &syn::Type) -> String {
+        if let syn::Type::Path(type_path) = ty
+            && let Some(segment) = type_path.path.segments.last()
+        {
+            return segment.ident.to_string().to_snake_case();
+        }
+
+        "model".to_string()
+    }
+
+    fn relation_side_field(column_name: String, to_model: syn::Type) -> Field {
+        Field {
+            name: format_ident!("{}", column_name),
+            column_name: column_name.clone(),
+            ty: parse_quote!(::cot::db::ForeignKey<#to_model>),
+            auto_value: false,
+            primary_key: false,
+            foreign_key: Some(ForeignKeySpec { to_model }),
+            many_to_many: None,
+            unique: false,
+        }
+    }
+
+    fn relation_table_fields(model: &ModelInSource, relation_field: &Field) -> Vec<Field> {
+        let relation = relation_field
+            .many_to_many
+            .clone()
+            .expect("relation field should be many-to-many");
+        let model_col = format!("{}_id", model.model.original_name.to_snake_case());
+        let relation_col = format!("{}_id", Self::type_base_name(&relation.to_model));
+
+        vec![
+            Self::relation_id_field(),
+            Self::relation_side_field(model_col, model.model.resolved_ty.clone()),
+            Self::relation_side_field(relation_col, relation.to_model),
+        ]
+    }
+
+    fn make_create_relation_table_operation(model: &ModelInSource, relation_field: &Field) -> DynOperation {
+        DynOperation::CreateModel {
+            table_name: Self::relation_table_name(model, relation_field),
+            model_ty: parse_quote!(::cot::__private::ManyToManyRelationModel),
+            fields: Self::relation_table_fields(model, relation_field),
+        }
+    }
+
+    fn make_remove_relation_table_operation(model: &ModelInSource, relation_field: &Field) -> DynOperation {
+        DynOperation::RemoveModel {
+            table_name: Self::relation_table_name(model, relation_field),
+            model_ty: parse_quote!(::cot::__private::ManyToManyRelationModel),
+            fields: Self::relation_table_fields(model, relation_field),
+        }
     }
 }
 
